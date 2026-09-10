@@ -5,3 +5,5 @@ build
 output
 .pytest_cache
 *.egg-info
+config.json
+config.yaml
