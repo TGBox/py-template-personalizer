@@ -11,12 +11,34 @@ from typing import Any, Dict, Optional, Tuple
 class PersonalizerConfig:
     """Manages the configuration mapping tables and fields to static replacement values."""
 
-    def __init__(self, data: Optional[Dict[str, Any]] = None):
+    def __init__(self, data: Optional[Dict[str, Any]] = None, base_dir: Optional[Path] = None):
         self._raw_data: Dict[str, Any] = data or {}
+        self._base_dir: Optional[Path] = base_dir
         # Normalized lookup: (table_lower, field_lower) -> str_value
         self._fields: Dict[Tuple[str, str], str] = {}
         self._tables: Dict[str, Dict[str, str]] = {}
         self._build_normalized_map()
+
+    def get_logo_image_bytes(self) -> Optional[Tuple[bytes, str]]:
+        """Look up configured logo file path (from logo.filename, logo.image_path, logo.image, logo.file).
+        If the file exists, return (image_bytes, file_suffix).
+        """
+        for field in ("filename", "image_path", "image", "file", "path"):
+            val = self.get_value("logo", field)
+            if not val:
+                continue
+            candidates = [Path(val)]
+            if self._base_dir:
+                candidates.append(self._base_dir / val)
+            candidates.append(Path.cwd() / val)
+
+            for cand in candidates:
+                if cand.is_file():
+                    try:
+                        return cand.read_bytes(), cand.suffix
+                    except Exception:
+                        pass
+        return None
 
     def _build_normalized_map(self) -> None:
         self._fields.clear()
@@ -79,7 +101,7 @@ def to_pascal_literal(value: str) -> str:
 
 def load_config(path_or_str: str | Path) -> PersonalizerConfig:
     """Load configuration from a YAML or JSON file."""
-    path = Path(path_or_str)
+    path = Path(path_or_str).resolve()
     if not path.is_file():
         raise FileNotFoundError(f"Configuration file not found: {path}")
 
@@ -110,4 +132,5 @@ def load_config(path_or_str: str | Path) -> PersonalizerConfig:
             f"Invalid configuration format in {path}: expected a dictionary/mapping at top level."
         )
 
-    return PersonalizerConfig(data)
+    return PersonalizerConfig(data, base_dir=path.parent)
+

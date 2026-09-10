@@ -51,6 +51,24 @@ class TemplateScanner:
                 if ds and df:
                     tables_fields[ds.lower()].add(df.lower())
 
+            # Check PropData (e.g. Barcode2D DataObject)
+            if "PropData" in elem.attrib:
+                try:
+                    from .fastreport_xml import FastReportXML
+
+                    props = FastReportXML.parse_delphi_propdata(elem.attrib["PropData"])
+                    for _, t_byte, payload in props:
+                        if t_byte == 0x0C:
+                            payload_text = payload.decode("utf-8", errors="replace")
+                            matches_ang_pd = re.findall(
+                                r'(?:<|&#60;)([a-zA-Z0-9_]+)\.(?:"|&#34;)?([a-zA-Z0-9_]+)(?:"|&#34;)?(?:>|&#62;)',
+                                payload_text,
+                            )
+                            for tbl, fld in matches_ang_pd:
+                                tables_fields[tbl.lower()].add(fld.lower())
+                except Exception:
+                    pass
+
         return tables_fields
 
     @classmethod

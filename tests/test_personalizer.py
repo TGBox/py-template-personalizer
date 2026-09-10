@@ -126,7 +126,7 @@ def test_pascal_script_and_barcode_replacement():
     assert '<logo."filename">' not in script
 
     barcode = root.find(".//TfrxBarcode2DView")
-    assert barcode.attrib["Expression"] == "trim('DE12345678')"
+    assert barcode.attrib["Expression"] == "'DE12345678'"
 
     memo_warn = root.find(".//TfrxMemoView")
     assert memo_warn.attrib["Highlight.Condition"] == "'GENODEF1MST' = ''"
@@ -154,3 +154,100 @@ def test_literal_concatenation_simplification():
     root = tree.getroot()
     memo = root.find(".//TfrxMemoView")
     assert memo.attrib["Text"] == "89073 Ulm"
+
+
+def test_propdata_qr_code_personalization():
+    from template_personalizer.fastreport_xml import FastReportXML
+
+    cfg = PersonalizerConfig({
+        "praxis": {
+            "bic": "GENODEF1ULM",
+            "iban": "DE02630901440012345678",
+            "unternehmen": "Praxis Mustermann GbR",
+        }
+    })
+    personalizer = TemplatePersonalizer(cfg)
+
+    payload = (
+        ' PresetClass="TfrxEPCPaymentPreset" '
+        'DataObject.ServiceTag="BCD" '
+        'DataObject.BIC="trim(&#60;praxis.&#34;bic&#34;&#62;)" '
+        'DataObject.Name="&#60;praxis.&#34;unternehmen&#34;&#62;" '
+        'DataObject.IBAN="trim(&#60;praxis.&#34;iban&#34;&#62;)" '
+        'DataObject.Money.Amount="&#60;summe.&#34;brutto&#34;&#62;" '
+        'DataObject.Information="\'Rechnungs Nr.\'+&#60;rechnung.&#34;rechnungnr&#34;&#62;"'
+    )
+    propdata_hex = FastReportXML.serialize_delphi_propdata([
+        ("Formats", 0x0C, payload.encode("utf-8"))
+    ])
+
+    xml = (
+        f'<TfrxReport Version="2025.1.7">'
+        f'  <TfrxReportPage Name="Page1">'
+        f'    <TfrxBarcode2DView Name="Barcode2D1" PropData="{propdata_hex}"/>'
+        f'  </TfrxReportPage>'
+        f'</TfrxReport>'
+    )
+    tree = ET.ElementTree(ET.fromstring(xml))
+    stats = personalizer.personalize_tree(tree, "test_qr.fr3")
+
+    assert stats.files_modified == 1
+    assert stats.replacements_per_field["praxis.bic"] == 1
+    assert stats.replacements_per_field["praxis.iban"] == 1
+    assert stats.replacements_per_field["praxis.unternehmen"] == 1
+
+    root = tree.getroot()
+    barcode = root.find(".//TfrxBarcode2DView")
+    mod_props = FastReportXML.parse_delphi_propdata(barcode.attrib["PropData"])
+    assert len(mod_props) == 1
+    mod_text = mod_props[0][2].decode("utf-8")
+
+    assert 'DataObject.BIC="\'GENODEF1ULM\'"' in mod_text
+    assert 'DataObject.IBAN="\'DE02630901440012345678\'"' in mod_text
+    assert 'DataObject.Name="\'Praxis Mustermann GbR\'"' in mod_text
+    # Unrelated references preserved
+    assert 'DataObject.Money.Amount="&#60;summe.&#34;brutto&#34;&#62;"' in mod_text
+    assert 'DataObject.Information="\'Rechnungs Nr.\'+&#60;rechnung.&#34;rechnungnr&#34;&#62;"' in mod_text
+
+
+def test_picture_view_logo_embedding(tmp_path):
+    from template_personalizer.fastreport_xml import FastReportXML
+
+    img_file = tmp_path / "test_logo.png"
+    # Minimal 1x1 PNG bytes
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00"
+        b"\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    img_file.write_bytes(png_bytes)
+
+    cfg = PersonalizerConfig({
+        "logo": {
+            "filename": str(img_file),
+        }
+    })
+    personalizer = TemplatePersonalizer(cfg)
+
+    xml = (
+        '<TfrxReport Version="2025.1.7">'
+        '  <TfrxReportPage Name="Page1">'
+        '    <TfrxPictureView Name="Picture1" Left="10" Top="10" Width="100" Height="100"/>'
+        '  </TfrxReportPage>'
+        '</TfrxReport>'
+    )
+    tree = ET.ElementTree(ET.fromstring(xml))
+    stats = personalizer.personalize_tree(tree, "test_pic.fr3")
+
+    assert stats.files_modified == 1
+    assert stats.replacements_per_field["logo.image_embedded"] == 1
+
+    root = tree.getroot()
+    pic = root.find(".//TfrxPictureView")
+    assert "Picture.PropData" in pic.attrib
+
+    cls_name, extracted_bytes = FastReportXML.extract_picture_from_propdata(pic.attrib["Picture.PropData"])
+    assert cls_name == "TPngImage"
+    assert extracted_bytes == png_bytes
+
+

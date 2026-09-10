@@ -30,3 +30,19 @@ def test_serialize_fastreport_xml():
     memo_roundtrip = roundtrip.find(".//TfrxMemoView")
     assert memo_roundtrip is not None
     assert memo_roundtrip.attrib["Text"] == 'Line1\r\nLine2: "val"'
+
+
+def test_propdata_roundtrip():
+    original_props = [
+        ("Formats", 0x0C, b' PresetClass="TfrxEPCPaymentPreset" DataObject.BIC="test"'),
+        ("CustomBin", 0x0A, b'\x01\x02\x03\x04\x05'),
+        ("ShortStr", 0x06, b'Hello'),
+    ]
+    hex_str = FastReportXML.serialize_delphi_propdata(original_props)
+    parsed = FastReportXML.parse_delphi_propdata(hex_str)
+
+    assert len(parsed) == 3
+    assert parsed[0] == original_props[0]
+    assert parsed[1] == original_props[1]
+    assert parsed[2] == original_props[2]
+

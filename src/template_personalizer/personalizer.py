@@ -48,6 +48,14 @@ class TemplatePersonalizer:
     def __init__(self, config: PersonalizerConfig, verbose: bool = False):
         self.config = config
         self.verbose = verbose
+        logo_info = self.config.get_logo_image_bytes()
+        if logo_info:
+            img_bytes, ext = logo_info
+            self._logo_picture_propdata: Optional[str] = FastReportXML.create_picture_propdata(
+                img_bytes, ext
+            )
+        else:
+            self._logo_picture_propdata = None
 
     def personalize_tree(self, tree: ET.ElementTree, filename: str = "") -> ReplacementStats:
         """Apply personalization directly to an ElementTree in memory."""
@@ -85,6 +93,37 @@ class TemplatePersonalizer:
                             f"[{filename}] <{elem.tag} {attr}>: {count} references replaced"
                         )
 
+            # Handle PropData attribute (e.g. TfrxBarcode2DView with DataObject)
+            if "PropData" in elem.attrib:
+                new_propdata, count = self._personalize_propdata(
+                    elem.attrib["PropData"], filename, stats
+                )
+                if count > 0:
+                    elem.attrib["PropData"] = new_propdata
+                    file_change_count += count
+
+            # Handle TfrxBarcode2DView
+            if elem.tag == "TfrxBarcode2DView":
+                expr = elem.attrib.get("Expression")
+                if expr:
+                    # Simplify trim('LITERAL') to 'LITERAL'
+                    simplified = re.sub(
+                        r"^trim\s*\(\s*('[^']*')\s*\)$", r"\1", expr, flags=re.IGNORECASE
+                    )
+                    if simplified != expr:
+                        elem.attrib["Expression"] = simplified
+
+            # Handle TfrxPictureView (embed logo image if configured and file exists)
+            if elem.tag == "TfrxPictureView" and self._logo_picture_propdata:
+                pic_name = elem.attrib.get("Name", "Picture")
+                elem.attrib["Picture.PropData"] = self._logo_picture_propdata
+                file_change_count += 1
+                stats.replacements_per_field["logo.image_embedded"] += 1
+                stats.details.append(
+                    f"[{filename}] Picture '{pic_name}': Embedded logo image into Picture.PropData"
+                )
+
+
             # Handle TfrxMemoView
             if elem.tag == "TfrxMemoView":
                 memo_name = elem.attrib.get("Name", "UnnamedMemo")
@@ -111,6 +150,81 @@ class TemplatePersonalizer:
             stats.replacements_per_file[filename] = file_change_count
 
         return stats
+
+    def _personalize_propdata(
+        self, hex_str: str, filename: str, stats: ReplacementStats
+    ) -> Tuple[str, int]:
+        """Personalize embedded Delphi PropData property streams (e.g. Barcode2D DataObject)."""
+        try:
+            properties = FastReportXML.parse_delphi_propdata(hex_str)
+        except Exception as e:
+            logger.debug(f"Failed to parse PropData in {filename}: {e}")
+            return hex_str, 0
+
+        total_changes = 0
+        mod_props = []
+
+        def encode_propdata_attr(val: str) -> str:
+            return val.replace("&", "&amp;").replace('"', "&#34;").replace("<", "&#60;").replace(">", "&#62;")
+
+        for prop_name, type_byte, payload in properties:
+            if type_byte == 0x0C and (prop_name == "Formats" or b"DataObject" in payload):
+                text = payload.decode("utf-8", errors="replace")
+                field_counts: Counter[str] = Counter()
+                changes_here = 0
+
+                # 1. Replace trim(...) wrapped references, simplifying to plain literal
+                pattern_trim = re.compile(
+                    r'trim\s*\(\s*(?:<|&#60;)([a-zA-Z0-9_]+)\.(?:"|&#34;)?([a-zA-Z0-9_]+)(?:"|&#34;)?(?:>|&#62;)\s*\)',
+                    re.IGNORECASE,
+                )
+
+                def repl_trim(match: re.Match) -> str:
+                    nonlocal changes_here
+                    tbl = match.group(1).lower()
+                    fld = match.group(2).lower()
+                    if self.config.has_field(tbl, fld):
+                        changes_here += 1
+                        field_counts[f"{tbl}.{fld}"] += 1
+                        lit = self.config.get_pascal_literal(tbl, fld)
+                        return encode_propdata_attr(lit)  # type: ignore
+                    return match.group(0)
+
+                text = pattern_trim.sub(repl_trim, text)
+
+                # 2. Replace simple angle bracket references
+                pattern_simple = re.compile(
+                    r'(?:<|&#60;)([a-zA-Z0-9_]+)\.(?:"|&#34;)?([a-zA-Z0-9_]+)(?:"|&#34;)?(?:>|&#62;)',
+                    re.IGNORECASE,
+                )
+
+                def repl_simple(match: re.Match) -> str:
+                    nonlocal changes_here
+                    tbl = match.group(1).lower()
+                    fld = match.group(2).lower()
+                    if self.config.has_field(tbl, fld):
+                        changes_here += 1
+                        field_counts[f"{tbl}.{fld}"] += 1
+                        lit = self.config.get_pascal_literal(tbl, fld)
+                        return encode_propdata_attr(lit)  # type: ignore
+                    return match.group(0)
+
+                text = pattern_simple.sub(repl_simple, text)
+
+                if changes_here > 0:
+                    total_changes += changes_here
+                    stats.replacements_per_field.update(field_counts)
+                    stats.details.append(
+                        f"[{filename}] PropData '{prop_name}': {changes_here} references replaced in DataObject"
+                    )
+                    payload = text.encode("utf-8")
+
+            mod_props.append((prop_name, type_byte, payload))
+
+        if total_changes > 0:
+            return FastReportXML.serialize_delphi_propdata(mod_props), total_changes
+        return hex_str, 0
+
 
     def _replace_script_expressions(self, text: str) -> Tuple[str, int, Counter[str]]:
         """Replace <table."field"> or <table.field> references in PascalScript code with string literals."""

@@ -66,3 +66,13 @@ def test_full_integration_on_testdata(tmp_path):
     barcode = tree_rechnung.find(".//TfrxBarcode2DView")
     assert barcode is not None
     assert "DE02630901440012345678" in barcode.attrib["Expression"]
+
+    from template_personalizer.fastreport_xml import FastReportXML
+
+    props = FastReportXML.parse_delphi_propdata(barcode.attrib["PropData"])
+    assert len(props) >= 1
+    prop_text = props[0][2].decode("utf-8")
+    assert 'DataObject.BIC="\'GENODEF1ULM\'"' in prop_text
+    assert 'DataObject.IBAN="\'DE02630901440012345678\'"' in prop_text
+    assert 'DataObject.Name="\'Praxis Mustermann GbR\'"' in prop_text
+
