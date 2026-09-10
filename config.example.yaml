@@ -1,0 +1,26 @@
+# Konfiguration für py-template-personalizer
+# Hier werden die Praxis- und Logowerte definiert, die in den FastReport (.fr3)
+# Vorlagen die relationalen Referenzen (z.B. [praxis."name"], <praxis."iban">, etc.) ersetzen.
+
+praxis:
+  name: "Praxis für Physiotherapie Mustermann"
+  namenszusatz: "Gemeinschaftspraxis & Therapiezentrum"
+  inhaber: "Dr. Max Mustermann & Erika Musterfrau"
+  strasse: "Gesundheitsstraße 42"
+  plz: "89073"
+  ort: "Ulm"
+  telefon1: "0731 / 123456"
+  telefon2: "0171 / 9876543"
+  email: "info@praxis-mustermann.de"
+  website: "www.praxis-mustermann.de"
+  unternehmen: "Praxis Mustermann GbR"
+  bank: "Volksbank Ulm-Biberach eG"
+  iban: "DE02630901440012345678"
+  bic: "GENODEF1ULM"
+  steuerid: "DE987654321"
+  ik: "123456789"
+  mailsignatur: "Mit freundlichen Grüßen,\nIhr Praxisteam Mustermann"
+  mitgliedsnrpad: "12345"
+
+logo:
+  filename: "praxis_logo.png"
