@@ -24,6 +24,18 @@ import customtkinter as ctk
 from template_personalizer.config import PersonalizerConfig, load_config
 from template_personalizer.personalizer import TemplatePersonalizer
 
+
+def _bundle_dir() -> Path:
+    """Return the directory that contains bundled data files.
+
+    When running as a PyInstaller one-file EXE the runtime unpacks
+    everything into a temporary folder stored in sys._MEIPASS.
+    When running normally (python gui.py) we use the script's own directory.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).parent
+
 # Design tokens
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -465,10 +477,16 @@ class App(ctk.CTk):
             self._load_config_from_path(Path(path))
 
     def _load_default_config(self) -> None:
+        # 1. Look for user-edited configs next to the exe / script first
         for candidate in [Path("config.yaml"), Path("config.yml"), Path("config.json")]:
             if candidate.is_file():
                 self._load_config_from_path(candidate)
                 return
+        # 2. Fall back to the example config bundled inside the exe
+        bundled = _bundle_dir() / "config.example.yaml"
+        if bundled.is_file():
+            self._load_config_from_path(bundled)
+            return
         self._log("Keine Standard-Config gefunden (config.yaml / config.json).\n")
 
     def _load_config_from_path(self, path: Path) -> None:
